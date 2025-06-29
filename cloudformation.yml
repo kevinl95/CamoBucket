@@ -1,14 +1,14 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Pipeline to cloak images using Fawkes via Lambda triggered by S3 events
+Description: CamoBucket - Automatically cloaks uploaded images using Fawkes, via S3 and Lambda
 
 Parameters:
   BucketName:
     Type: String
-    Description: Name of the S3 bucket to use for input and output
+    Description: Name of the S3 bucket to create and use for input/output
 
 Resources:
 
-  FawkesBucket:
+  CamoBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Ref BucketName
@@ -21,6 +21,61 @@ Resources:
                   - Name: prefix
                     Value: input/
             Function: !GetAtt FawkesFunction.Arn
+
+  # Custom resource Lambda to create 'folders' in S3
+  InitPrefixFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: InitCamoBucketFolders
+      Handler: index.handler
+      Role: !GetAtt InitPrefixFunctionRole.Arn
+      Runtime: python3.8
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+
+          def handler(event, context):
+              s3 = boto3.client('s3')
+              bucket = event['ResourceProperties']['Bucket']
+              prefixes = ['input/', 'output/']
+              for prefix in prefixes:
+                  s3.put_object(Bucket=bucket, Key=prefix)
+              return { 'PhysicalResourceId': f'{bucket}/initialized' }
+
+  InitPrefixFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AllowS3Put
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub "${CamoBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  InitFolders:
+    Type: Custom::InitPrefixes
+    DependsOn: CamoBucket
+    Properties:
+      ServiceToken: !GetAtt InitPrefixFunction.Arn
+      Bucket: !Ref BucketName
 
   FawkesLambdaExecutionRole:
     Type: AWS::IAM::Role
@@ -41,7 +96,7 @@ Resources:
                 Action:
                   - s3:GetObject
                   - s3:PutObject
-                Resource: !Sub "${FawkesBucket.Arn}/*"
+                Resource: !Sub "${CamoBucket.Arn}/*"
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -52,7 +107,7 @@ Resources:
   FawkesFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: FawkesImageCloak
+      FunctionName: CamoBucketProcessor
       Handler: lambda_function.lambda_handler
       Role: !GetAtt FawkesLambdaExecutionRole.Arn
       Runtime: python3.8
@@ -81,4 +136,4 @@ Resources:
       FunctionName: !Ref FawkesFunction
       Action: lambda:InvokeFunction
       Principal: s3.amazonaws.com
-      SourceArn: !GetAtt FawkesBucket.Arn
+      SourceArn: !GetAtt CamoBucket.Arn
