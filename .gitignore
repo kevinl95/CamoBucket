@@ -7,7 +7,7 @@ __pycache__/
 *.so
 
 # Lambda layer
-fawkes-layer.zip
+metadata-scrubber-layer.zip
 python/*
 
 # Distribution / packaging
