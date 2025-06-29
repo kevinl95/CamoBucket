@@ -6,6 +6,10 @@ __pycache__/
 # C extensions
 *.so
 
+# Lambda layer
+fawkes-layer.zip
+python/*
+
 # Distribution / packaging
 .Python
 build/
