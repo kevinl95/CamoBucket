@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Pipeline to cloak images using Fawkes via Lambda triggered by S3 events
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: Name of the S3 bucket to use for input and output
+
+Resources:
+
+  FawkesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: input/
+            Function: !GetAtt FawkesFunction.Arn
+
+  FawkesLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FawkesS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "${FawkesBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  FawkesFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: FawkesImageCloak
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt FawkesLambdaExecutionRole.Arn
+      Runtime: python3.8
+      Timeout: 900
+      MemorySize: 2048
+      Code:
+        S3Bucket: <REPLACE_WITH_CODE_BUCKET>
+        S3Key: <REPLACE_WITH_CODE_KEY>
+      Layers:
+        - !Ref FawkesLayer
+
+  FawkesLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: FawkesDependencies
+      Description: Dependencies for running Fawkes cloaking tool
+      CompatibleRuntimes:
+        - python3.8
+      Content:
+        S3Bucket: <REPLACE_WITH_LAYER_BUCKET>
+        S3Key: <REPLACE_WITH_LAYER_KEY>
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FawkesFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !GetAtt FawkesBucket.Arn
