@@ -71,92 +71,110 @@ Resources:
           import numpy as np
           from PIL import Image
           import io
+          import urllib3
+          import traceback
+
           s3 = boto3.client('s3')
+          http = urllib3.PoolManager()
+
+          def send_response(event, context, status, reason, physical_id):
+              response_body = json.dumps({
+                  'Status': status,
+                  'Reason': reason,
+                  'PhysicalResourceId': physical_id,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': {}
+              })
+              http.request('PUT', event['ResponseURL'], body=response_body, headers={'Content-Type': 'application/json'})
 
           def add_adversarial_noise(image_array, intensity=8):
-              """Add targeted noise to confuse facial recognition"""
               noise = np.random.normal(0, intensity, image_array.shape)
               height = image_array.shape[0]
               noise[int(height*0.6):] *= 0.3
               return np.clip(image_array + noise, 0, 255).astype(np.uint8)
 
           def lambda_handler(event, context):
-              # Handle CloudFormation custom resource
-              if 'RequestType' in event:
-                  bucket = event['ResourceProperties']['Bucket']
-                  
-                  # Initialize folders
-                  if event['ResourceProperties'].get('Type') == 'InitFolders':
-                      for prefix in ['input/', 'output/']:
-                          s3.put_object(Bucket=bucket, Key=prefix)
-                      return {'PhysicalResourceId': f'{bucket}/folders-initialized'}
-                  
-                  # Configure S3 notifications
-                  if event['ResourceProperties'].get('Type') == 'S3Notification':
-                      lambda_arn = event['ResourceProperties']['LambdaArn']
-                      if event['RequestType'] == 'Create' or event['RequestType'] == 'Update':
-                          s3.put_bucket_notification_configuration(
-                              Bucket=bucket,
-                              NotificationConfiguration={
-                                  'LambdaFunctionConfigurations': [{
-                                      'Id': 'CamoProcessorTrigger',
-                                      'LambdaFunctionArn': lambda_arn,
-                                      'Events': ['s3:ObjectCreated:*'],
-                                      'Filter': {'Key': {'FilterRules': [{'Name': 'prefix', 'Value': 'input/'}]}}
-                                  }]
-                              }
-                          )
-                      return {'PhysicalResourceId': f'{bucket}/notification-configured'}
-              
-              # Handle S3 trigger for image processing
-              if 'Records' not in event:
-                  return {'statusCode': 400, 'body': 'No S3 records found'}
-                  
-              bucket = event['Records'][0]['s3']['bucket']['name']
-              key = event['Records'][0]['s3']['object']['key']
-              
-              if key.startswith('output/'):
-                  return {'statusCode': 200, 'body': 'Already processed'}
-              
               try:
+                  if 'RequestType' in event:
+                      bucket = event['ResourceProperties']['Bucket']
+                      if event['ResourceProperties'].get('Type') == 'InitFolders':
+                          for prefix in ['input/', 'output/']:
+                              s3.put_object(Bucket=bucket, Key=prefix)
+                          send_response(event, context, "SUCCESS", "Folders initialized", f'{bucket}/folders-initialized')
+                          return
+
+                      if event['ResourceProperties'].get('Type') == 'S3Notification':
+                          lambda_arn = event['ResourceProperties']['LambdaArn']
+                          if event['RequestType'] in ['Create', 'Update']:
+                              s3.put_bucket_notification_configuration(
+                                  Bucket=bucket,
+                                  NotificationConfiguration={
+                                      'LambdaFunctionConfigurations': [{
+                                          'Id': 'CamoProcessorTrigger',
+                                          'LambdaFunctionArn': lambda_arn,
+                                          'Events': ['s3:ObjectCreated:*'],
+                                          'Filter': {
+                                              'Key': {
+                                                  'FilterRules': [{
+                                                      'Name': 'prefix',
+                                                      'Value': 'input/'
+                                                  }]
+                                              }
+                                          }
+                                      }]
+                                  }
+                              )
+                          send_response(event, context, "SUCCESS", "S3 notification configured", f'{bucket}/notification-configured')
+                          return
+
+                  if 'Records' not in event:
+                      return {'statusCode': 400, 'body': 'No S3 records found'}
+
+                  bucket = event['Records'][0]['s3']['bucket']['name']
+                  key = event['Records'][0]['s3']['object']['key']
+
+                  if key.startswith('output/'):
+                      return {'statusCode': 200, 'body': 'Already processed'}
+
                   response = s3.get_object(Bucket=bucket, Key=key)
                   image_data = response['Body'].read()
-                  
+
                   image = Image.open(io.BytesIO(image_data))
                   if image.mode != 'RGB':
                       image = image.convert('RGB')
-                  
-                  # Convert to numpy and add adversarial noise
+
                   img_array = np.array(image)
                   noisy_array = add_adversarial_noise(img_array)
-                  
-                  # Convert back to PIL
                   noisy_image = Image.fromarray(noisy_array)
-                  
-                  # Save processed image
+
                   output_buffer = io.BytesIO()
                   noisy_image.save(output_buffer, format='JPEG', quality=95)
                   output_buffer.seek(0)
-                  
-                  # Upload to output folder
+
                   filename = key.split('/')[-1]
                   output_key = f"output/cloaked_{filename}"
                   s3.put_object(
                       Bucket=bucket,
                       Key=output_key,
                       Body=output_buffer.getvalue(),
-                      ContentType='image/jpeg'
+                      ContentType='image/jpeg',
+                      Metadata={"X-Cloaked": "true"}
                   )
-                  
+
                   return {
                       'statusCode': 200,
                       'body': json.dumps({
                           'message': f'Image cloaked: {key} -> {output_key}'
                       })
                   }
-                  
+
               except Exception as e:
-                  print(f"Error processing {key}: {str(e)}")
+                  traceback.print_exc()
+                  if 'RequestType' in event:
+                      send_response(event, context, "FAILED", str(e), event.get('PhysicalResourceId', 'error'))
+                      return
                   return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
       Layers:
         - !Ref PillowLayer
