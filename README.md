@@ -18,7 +18,7 @@
 
 ## Quick Deploy
 
-[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=CamoBucket&templateURL=https://camobucket.s3.amazonaws.com/cloudformation.yml)
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=CamoBucket&templateURL=https://camobucket.s3.us-east-1.amazonaws.com/cloudformation.yml)
 
 ## Manual Deployment Steps
 
