@@ -4,7 +4,11 @@ Description: CamoBucket - Automatically adds adversarial noise to uploaded image
 Parameters:
   BucketName:
     Type: String
-    Description: Name of the S3 bucket to create and use for input/output
+    Description: Name of the S3 bucket to create and use for input/output (must be lowercase, 3-63 characters, no spaces)
+    AllowedPattern: ^[a-z0-9][a-z0-9-]*[a-z0-9]$
+    MinLength: 3
+    MaxLength: 63
+    ConstraintDescription: Bucket name must be lowercase, 3-63 characters, start/end with alphanumeric, and contain only lowercase letters, numbers, and hyphens
 
 Resources:
 
@@ -19,6 +23,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt CamoProcessor.Arn
       Bucket: !Ref BucketName
+      Type: InitFolders
 
   CamoProcessorRole:
     Type: AWS::IAM::Role
@@ -50,7 +55,6 @@ Resources:
   CamoProcessor:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: CamoBucketProcessor
       Handler: index.lambda_handler
       Role: !GetAtt CamoProcessorRole.Arn
       Runtime: python3.10
@@ -73,12 +77,32 @@ Resources:
               return np.clip(image_array + noise, 0, 255).astype(np.uint8)
 
           def lambda_handler(event, context):
-              # Handle CloudFormation custom resource for folder initialization
+              # Handle CloudFormation custom resource
               if 'RequestType' in event:
                   bucket = event['ResourceProperties']['Bucket']
-                  for prefix in ['input/', 'output/']:
-                      s3.put_object(Bucket=bucket, Key=prefix)
-                  return {'PhysicalResourceId': f'{bucket}/initialized'}
+                  
+                  # Initialize folders
+                  if event['ResourceProperties'].get('Type') == 'InitFolders':
+                      for prefix in ['input/', 'output/']:
+                          s3.put_object(Bucket=bucket, Key=prefix)
+                      return {'PhysicalResourceId': f'{bucket}/folders-initialized'}
+                  
+                  # Configure S3 notifications
+                  if event['ResourceProperties'].get('Type') == 'S3Notification':
+                      lambda_arn = event['ResourceProperties']['LambdaArn']
+                      if event['RequestType'] == 'Create' or event['RequestType'] == 'Update':
+                          s3.put_bucket_notification_configuration(
+                              Bucket=bucket,
+                              NotificationConfiguration={
+                                  'LambdaConfigurations': [{
+                                      'Id': 'CamoProcessorTrigger',
+                                      'LambdaFunctionArn': lambda_arn,
+                                      'Events': ['s3:ObjectCreated:*'],
+                                      'Filter': {'Key': {'FilterRules': [{'Name': 'prefix', 'Value': 'input/'}]}}
+                                  }]
+                              }
+                          )
+                      return {'PhysicalResourceId': f'{bucket}/notification-configured'}
               
               # Handle S3 trigger for image processing
               bucket = event['Records'][0]['s3']['bucket']['name']
@@ -151,18 +175,12 @@ Resources:
       SourceAccount: !Ref AWS::AccountId
 
   S3BucketNotification:
-    Type: AWS::S3::Bucket
+    Type: Custom::S3Notification
     Properties:
-      BucketName: !Ref BucketName
-      NotificationConfiguration:
-        LambdaConfigurations:
-          - Event: s3:ObjectCreated:*
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: input/
-            Function: !GetAtt CamoProcessor.Arn
+      ServiceToken: !GetAtt CamoProcessor.Arn
+      Bucket: !Ref BucketName
+      LambdaArn: !GetAtt CamoProcessor.Arn
+      Type: S3Notification
     DependsOn:
       - CamoProcessor
       - LambdaInvokePermission
