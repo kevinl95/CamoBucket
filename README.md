@@ -1,3 +1,5 @@
+![CamoBucket Logo](assets/logo.png)
+
 # CamoBucket
 [![Lint CloudFormation Template](https://github.com/kevinl95/CamoBucket/actions/workflows/main.yml/badge.svg)](https://github.com/kevinl95/CamoBucket/actions/workflows/main.yml)
 
@@ -49,6 +51,8 @@ CamoBucket uses adversarial noise to protect privacy by confusing facial recogni
 - **Imperceptible to humans** but causes neural networks to misclassify or fail to detect faces
 - **Transferable across models** - noise that fools one facial recognition system often works on others
 - **Lightweight approach** that doesn't require training or face detection, making it fast and scalable
+
+![CamoBucket architecture diagram](assets/architecturediagram.png)
 
 ## Usage
 
