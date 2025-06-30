@@ -12,15 +12,6 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Ref BucketName
-      NotificationConfiguration:
-        LambdaConfigurations:
-          - Event: s3:ObjectCreated:*
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: input/
-            Function: !GetAtt CamoProcessor.Arn
 
   InitFolders:
     Type: Custom::InitPrefixes
@@ -48,7 +39,7 @@ Resources:
                 Action:
                   - s3:GetObject
                   - s3:PutObject
-                Resource: !Sub "${CamoBucket.Arn}/*"
+                Resource: !Sub "arn:aws:s3:::${BucketName}/*"
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -156,4 +147,22 @@ Resources:
       FunctionName: !Ref CamoProcessor
       Action: lambda:InvokeFunction
       Principal: s3.amazonaws.com
-      SourceArn: !GetAtt CamoBucket.Arn
+      SourceArn: !Sub "arn:aws:s3:::${BucketName}"
+      SourceAccount: !Ref AWS::AccountId
+
+  S3BucketNotification:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: input/
+            Function: !GetAtt CamoProcessor.Arn
+    DependsOn:
+      - CamoProcessor
+      - LambdaInvokePermission
